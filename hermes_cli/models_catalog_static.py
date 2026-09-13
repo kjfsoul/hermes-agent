@@ -264,7 +264,9 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
     ],
     "kilocode": [
         "anthropic/claude-opus-4.6", "anthropic/claude-sonnet-4.6", "openai/gpt-5.4",
-        "google/gemini-3-pro-preview", "google/gemini-3-flash-preview",
+        # gemini-3-pro-preview retired on the live Kilo gateway (verified
+        # 2026-09-13): the gateway serves gemini-3.1-pro-preview.
+        "google/gemini-3.1-pro-preview", "google/gemini-3-flash-preview",
     ],
     "alibaba": list(_ALIBABA_MODELS),
     "alibaba-cn": list(_ALIBABA_MODELS),

@@ -47,6 +47,16 @@ from hermes_cli.models_catalog_static import (
     _PROVIDER_RETIRED_ALIASES,
     _SILENT_DEFAULT_PROVIDERS,
     _xai_finalize_catalog)
+# Providers whose successful authenticated live catalog IS the authoritative
+# picker source (model-refresh task, mirror of refresh-model-catalogs v3.4
+# required-provider contract): a successful live fetch must not be unioned
+# with curated-only entries, so stale/dead curated IDs can never resurface
+# after a refresh. Static lists remain the bootstrap-only path.
+_LIVE_AUTHORITATIVE_PICKER_PROVIDERS: frozenset[str] = frozenset(
+    {"zai", "deepseek", "kilocode", "nous"}
+)
+
+
 from hermes_cli.models_reasoning_caps import (
     _OPENROUTER_CATALOG_URL,
     _seed_reasoning_caps)
@@ -1438,6 +1448,12 @@ def _profile_live_catalog(normalized: str) -> Optional[list[str]]:
     curated = list(_PROVIDER_MODELS.get(normalized, [])) or list(profile.fallback_models or ())
     if not curated:
         return live
+    if normalized in _LIVE_AUTHORITATIVE_PICKER_PROVIDERS:
+        # A successful authenticated live catalog is the authoritative picker
+        # source for these providers: do NOT union curated-only entries into
+        # it, so a stale/dead curated ID can never resurface after a
+        # successful refresh. Static lists remain bootstrap-only.
+        return list(live)
     primary, secondary = (live, curated) if normalized in _LIVE_FIRST_PICKER_PROVIDERS else (curated, live)
     return _merge_unique(primary, secondary, key=_model_dedup_key)
 
