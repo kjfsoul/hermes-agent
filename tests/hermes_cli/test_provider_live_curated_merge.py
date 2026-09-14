@@ -33,11 +33,46 @@ class TestGenericProviderLiveCuratedMerge:
         return p
 
     def test_curated_first_for_single_provider(self):
-        """Single providers (zai) stay curated-first; live-only appended."""
-        assert "zai" not in _LIVE_FIRST_PICKER_PROVIDERS
-        curated = ["glm-5.2", "glm-5.1", "glm-5"]  # authoritative-intent order
+        """Generic single providers stay curated-first; live-only appended.
+
+        (kimi/zai slugs normalize to dedicated catalogs upstream; use a
+        neutral provider slug that exercises the generic profile path.)
+        """
+        curated = ["ex-k2.5", "ex-k2.6", "ex-k3"]  # authoritative-intent order
         # Live API lags AND surfaces a brand-new model not yet curated.
-        live = ["glm-5", "glm-6-preview"]
+        live = ["ex-k3", "ex-k4-preview"]
+        profile = self._make_profile(live)
+
+        with (
+            patch("providers.get_provider_profile", return_value=profile),
+            patch(
+                "hermes_cli.auth.resolve_api_key_provider_credentials",
+                return_value={"api_key": "k", "base_url": ""},
+            ),
+            patch.dict("hermes_cli.models._PROVIDER_MODELS", {"exampleai": curated}),
+        ):
+            result = provider_model_ids("exampleai")
+
+        # Curated entries lead (commit 658ac1d86, #46309).
+        assert result[: len(curated)] == curated
+        # Live-only entries (kimi-k4-preview) still surface, appended afterwards.
+        assert "ex-k4-preview" in result
+        assert result.index("ex-k4-preview") >= len(curated)
+        # No duplicates for models present in both.
+        assert result.count("ex-k3") == 1
+
+    def test_zai_is_live_authoritative(self):
+        """model-refresh policy: zai's successful live catalog IS the picker.
+
+        Curated-only entries (dead IDs) must NOT be unioned back in when the
+        live fetch succeeded — a stale curated ID can never resurface after a
+        successful refresh.
+        """
+        from hermes_cli.models import _LIVE_AUTHORITATIVE_PICKER_PROVIDERS
+
+        assert "zai" in _LIVE_AUTHORITATIVE_PICKER_PROVIDERS
+        curated = ["glm-5.2", "glm-5.1", "glm-5"]
+        live = ["glm-5"]  # live dropped 5.2/5.1 (e.g. retired upstream)
         profile = self._make_profile(live)
 
         with (
@@ -50,29 +85,24 @@ class TestGenericProviderLiveCuratedMerge:
         ):
             result = provider_model_ids("zai")
 
-        # Curated entries lead (commit 658ac1d86, #46309).
-        assert result[: len(curated)] == curated
-        # Live-only entries (glm-6-preview) still surface, appended afterwards.
-        assert "glm-6-preview" in result
-        assert result.index("glm-6-preview") >= len(curated)
-        # No duplicates for models present in both.
-        assert result.count("glm-5") == 1
+        assert result == live  # no curated-only resurrection
 
 
     def test_no_models_dropped_either_direction(self):
         """Every live AND curated model survives the merge for both modes."""
         live = ["a", "b"]
-        # zai = curated-first
+        # generic curated-first provider (zai is live-authoritative — see
+        # test_zai_is_live_authoritative)
         with (
             patch("providers.get_provider_profile", return_value=self._make_profile(live)),
             patch(
                 "hermes_cli.auth.resolve_api_key_provider_credentials",
                 return_value={"api_key": "k", "base_url": ""},
             ),
-            patch.dict("hermes_cli.models._PROVIDER_MODELS", {"zai": ["c", "b"]}),
+            patch.dict("hermes_cli.models._PROVIDER_MODELS", {"exampleai": ["c", "b"]}),
         ):
-            zai_result = set(provider_model_ids("zai"))
-        assert {"a", "b", "c"} <= zai_result
+            ex_result = set(provider_model_ids("exampleai"))
+        assert {"a", "b", "c"} <= ex_result
 
         # opencode-zen = live-first
         with (
