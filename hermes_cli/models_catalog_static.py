@@ -174,8 +174,12 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "gemini-3.1-pro-preview", "gemini-3-pro-preview", "gemini-3.6-flash", "gemini-3.1-flash-lite-preview",
     ],
     "zai": [
-        "glm-5.3", "glm-5.3-flash", "glm-5.2", "glm-5.1", "glm-5", "glm-5v-turbo", "glm-5-turbo",
-        "glm-4.7", "glm-4.5", "glm-4.5-flash",
+        # Live-verified 2026-09-13 vs https://api.z.ai/api/coding/paas/v4/models (10 models).
+        # Keep in sync with the live API; the daily drift audit
+        # (model_refresh/refresh_model_catalogs.py) reports divergence at
+        # ~/.hermes/cache/model_catalog_drift.json.
+        "glm-5.3", "glm-5.3-flash", "glm-5.2", "glm-5.1", "glm-5", "glm-5-turbo",
+        "glm-4.7", "glm-4.6", "glm-4.5-air", "glm-4.5",
     ],
     "xai": list(_XAI_MODELS),
     # Nemotron flagships, then third-party agentic models hosted on build.nvidia.com.
@@ -205,7 +209,14 @@ _PROVIDER_MODELS: dict[str, list[str]] = {
         "claude-sonnet-4-6", "claude-opus-4-5-20251101", "claude-sonnet-4-5-20250929",
         "claude-opus-4-20250514", "claude-sonnet-4-20250514", "claude-haiku-4-5-20251001",
     ],
-    "deepseek": ["deepseek-v4-pro", "deepseek-flash"],
+    "deepseek": [
+        # Live-verified 2026-09-13 vs https://api.deepseek.com/models:
+        # exactly {deepseek-flash, deepseek-v4-pro}. deepseek-v4-flash /
+        # -vision-exp are retired legacy aliases still accepted by the API
+        # but served by deepseek-flash (identical system_fingerprint).
+        # Canonical ID per founder 2026-09-11.
+        "deepseek-flash", "deepseek-v4-pro",
+    ],
     "xiaomi": ["mimo-v2.5-pro", "mimo-v2.5", "mimo-v2-pro", "mimo-v2-omni", "mimo-v2-flash"],
     "tencent-tokenhub": list(_TENCENT_MODELS),
     "tencent-tokenplan": list(_TENCENT_MODELS),
