@@ -27,7 +27,14 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
 _REAL_HERMES_HOME = os.path.expanduser("~/.hermes")
-_SCRIPT = os.path.join(_REAL_HERMES_HOME, "scripts", "refresh-model-catalogs.py")
+# Default: the deployed runtime path (wrapper -> canonical module), i.e. what
+# cron actually executes. Override with MODEL_REFRESH_MODULE to point the
+# suite at the repo-owned module directly (clean-clone / clean-env runs —
+# no implementation assumed under ~/.hermes/scripts).
+_SCRIPT = os.environ.get(
+    "MODEL_REFRESH_MODULE",
+    os.path.join(_REAL_HERMES_HOME, "scripts", "refresh-model-catalogs.py"),
+)
 _spec = importlib.util.spec_from_file_location("refresh_model_catalogs", _SCRIPT)
 
 
@@ -463,14 +470,22 @@ class ConfigNonRegression(unittest.TestCase):
             "baseline_hashes.json")))
         import hashlib
 
+        # Authorized intentional change (closeout directive S1, canary-verified):
+        # profiles/optimizer/config.yaml :: auxiliary.web_extract.model
+        # glm -> glm-5.3-flash. Nothing else may differ from baseline.
+        _ALLOWLIST = {
+            "profiles/optimizer/config.yaml":
+                "f34f3865f6c07b4b4079f06956283a27bf1723dbb7573f775cbff56f13d1122c",
+        }
         checked = 0
         for rel, meta in base.items():
             if "error" in meta:
                 continue
             path = os.path.join(_REAL_HERMES_HOME, rel)
             h = hashlib.sha256(open(path, "rb").read()).hexdigest()
+            expected = _ALLOWLIST.get(rel, meta["sha256"])
             self.assertEqual(
-                h, meta["sha256"],
+                h, expected,
                 f"{rel} changed vs baseline (must remain untouched)")
             checked += 1
         self.assertGreater(checked, 20)
@@ -496,6 +511,92 @@ class ConfigNonRegression(unittest.TestCase):
              ("openrouter", "openrouter/free"),
              ("deepseek", "deepseek-flash")],
         )
+
+
+class OpenRouterLiveAppendPickerTests(unittest.TestCase):
+    """fetch_openrouter_models must expose non-curated live models.
+
+    The curated manifest is a hand-pick inside a ~445-model live catalog.
+    A successful live fetch is authoritative: every tool-capable live model
+    must be selectable (curated recommendations first), and no static
+    allowlist may reject a live ID.
+    """
+
+    def _run_fetch(self, catalog, curated_ids):
+        import importlib
+
+        models_mod = importlib.import_module("hermes_cli.models")
+        models_mod._openrouter_catalog_cache = None
+
+        payload = {"data": list(catalog)}
+        resp = mock.MagicMock()
+        resp.status = 200
+        resp.read.return_value = json.dumps(payload).encode()
+        ctx = mock.MagicMock()
+        ctx.__enter__ = mock.Mock(return_value=resp)
+        ctx.__exit__ = mock.Mock(return_value=False)
+
+        from hermes_cli import model_catalog
+
+        curated_pairs = [(mid, "free") for mid in curated_ids]
+        # Patch models.py's own indirection (it wraps urlopen to avoid
+        # cross-origin header forwarding) — patching urllib.request.urlopen
+        # does not intercept this path.
+        with mock.patch.object(models_mod, "_urlopen_model_catalog_request",
+                               return_value=ctx), \
+             mock.patch.object(model_catalog, "get_curated_openrouter_models",
+                               return_value=curated_pairs):
+            return models_mod.fetch_openrouter_models(force_refresh=True)
+
+    def test_non_curated_live_model_is_selectable_and_curated_lead(self):
+        catalog = [
+            {"id": "vendor/curated-a", "pricing": {"prompt": "0", "completion": "0"},
+             "supported_parameters": ["tools"]},
+            {"id": "vendor/curated-b", "pricing": {"prompt": "1", "completion": "2"},
+             "supported_parameters": ["tools"]},
+            {"id": "vendor/live-only", "pricing": {"prompt": "0", "completion": "0"},
+             "supported_parameters": ["tools"]},
+            {"id": "vendor/no-tools", "pricing": {"prompt": "0", "completion": "0"},
+             "supported_parameters": ["image"]},
+        ]
+        result = self._run_fetch(catalog, ["vendor/curated-a", "vendor/curated-b"])
+        ids = [mid for mid, _ in result]
+        # Curated recommendations keep the top, live-only follows, toolless hidden.
+        self.assertEqual(
+            ids,
+            ["vendor/curated-a", "vendor/curated-b", "vendor/live-only"],
+        )
+        # Live-only entry carries the free badge from live pricing.
+        self.assertEqual(dict(result)["vendor/live-only"], "free")
+
+    def test_dead_curated_entry_does_not_resurface(self):
+        catalog = [
+            {"id": "vendor/curated-live", "pricing": {"prompt": "0", "completion": "0"},
+             "supported_parameters": ["tools"]},
+        ]
+        result = self._run_fetch(catalog, ["vendor/curated-live", "vendor/dead-curated"])
+        ids = [mid for mid, _ in result]
+        self.assertNotIn("vendor/dead-curated", ids)
+        self.assertEqual(ids, ["vendor/curated-live"])
+
+    def test_live_catalog_failure_does_not_invent_entries(self):
+        # Manifest unreachable + live fetch fails → static curated fallback,
+        # never a fabricated non-curated entry.
+        import importlib
+
+        models_mod = importlib.import_module("hermes_cli.models")
+        models_mod._openrouter_catalog_cache = None
+
+        from hermes_cli import model_catalog
+
+        curated_pairs = [("vendor/curated-a", "free"), ("vendor/curated-b", "free")]
+        with mock.patch("urllib.request.urlopen",
+                        side_effect=OSError("network down")), \
+             mock.patch.object(model_catalog, "get_curated_openrouter_models",
+                               return_value=curated_pairs):
+            result = models_mod.fetch_openrouter_models(force_refresh=True)
+        ids = [mid for mid, _ in result]
+        self.assertEqual(ids, ["vendor/curated-a", "vendor/curated-b"])
 
 
 if __name__ == "__main__":

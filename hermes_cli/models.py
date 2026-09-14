@@ -607,6 +607,22 @@ def fetch_openrouter_models(
             desc = "free" if _openrouter_model_is_free(live_item.get("pricing")) else ""
         curated.append((preferred_id, desc))
 
+    # Live-append pass (model-refresh task): the curated manifest is a
+    # hand-pick inside a ~445-model live catalog, so successful live results
+    # must remain selectable even when absent from the manifest. Append every
+    # remaining tool-capable live model, curated recommendations leading.
+    # Entries are live-sourced by construction — a dead ID can never enter
+    # the picker through this path.
+    curated_ids = {mid for mid, _ in curated}
+    for mid, item in live_by_id.items():
+        if mid in curated_ids or mid in {pid for pid, _ in fallback}:
+            continue
+        if not _openrouter_model_supports_tools(item):
+            continue
+        curated.append(
+            (mid, "free" if _openrouter_model_is_free(item.get("pricing")) else "")
+        )
+
     if not curated:
         return list(cached or fallback)
     if not curated[0][1]:
