@@ -88,7 +88,9 @@ def _strip_quotes(command: str) -> str:
 
 _LONG_LIVED_FOREGROUND_PATTERNS = tuple(re.compile(p, re.IGNORECASE) for p in (
     r"\b(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|serve|watch)\b",
-    r"\bdocker\s+compose\s+up\b",
+    # Detached compose (-d/--detach) returns immediately — not a hang risk.
+    # Exempt when a detach flag appears anywhere after `up`; attached stays guarded.
+    r"\bdocker\s+compose\s+up\b(?![^\n;&|]*\s(?:-[a-z]*d|--detach)\b)",
     r"\bnext\s+dev\b",
     r"\bvite(?:\s|$)",
     r"\bnodemon\b",
