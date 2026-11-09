@@ -82,7 +82,17 @@ def test_replicate_then_state_roundtrip(home, tmp_path):
     assert state["authority"] == page["authority"]
 
 
-def test_promote_requires_confirm_and_takes_over(home, tmp_path):
+def test_promote_requires_confirm_and_takes_over(home, tmp_path, monkeypatch):
+    # A previously idle driver must observe the newly promoted authoritative
+    # room without depending on periodic polling.
+    service = methods_groups.get_hosted_room_service()
+    assert service is not None
+    wakes = []
+    original_wakeup = service.wakeup
+    def observed_wakeup():
+        wakes.append(True)
+        original_wakeup()
+    monkeypatch.setattr(service, "wakeup", observed_wakeup)
     page = _authority_page(tmp_path)
     _result(
         srv._methods["groups.replicate"](
@@ -104,6 +114,7 @@ def test_promote_requires_confirm_and_takes_over(home, tmp_path):
     )
     assert promoted["authority_epoch"] == 2
     assert promoted["previous_gateway_id"] == page["authority"]["gateway_id"]
+    assert wakes == [True], "promoted room must wake an idle hosted supervisor"
 
     # The room is now hosted locally with full history + claim event.
     log = _result(srv._methods["groups.log"](4, {"room_id": "room-1"}))

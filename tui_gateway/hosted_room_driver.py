@@ -440,13 +440,18 @@ class HostedRoomRuntime:
             while not self._stop.is_set():
                 # Clear before work so a write racing the cycle forces a follow-up pass.
                 self._wake.clear()
+                # An empty hosted profile has no periodic recovery work.
+                # Every legitimate room creation/import calls wakeup(), while an
+                # existing room retains polling for recovery of abandoned turns.
+                wait_for = self.poll_interval_seconds
                 try:
-                    self._run_cycle()
+                    if not self._run_cycle():
+                        wait_for = None  # event-driven until a new room is admitted
                 except Exception as exc:  # keep independent rooms serviceable
                     self._record_error(f"worker cycle failed: {exc}")
                 with self._status_lock:
                     self._cycles += 1
-                self._wake.wait(self.poll_interval_seconds)
+                self._wake.wait(wait_for)
         finally:
             while True:
                 with self._status_lock:
@@ -457,30 +462,31 @@ class HostedRoomRuntime:
                     room_thread.join(self.active_poll_interval_seconds)
             self._release_idle_leases()
 
-    def _run_cycle(self) -> None:
+    def _run_cycle(self) -> bool:
         with self._status_lock:
             supervisor = self._thread
         if threading.current_thread() is not supervisor:
-            for binding in tuple(self._rooms_provider()):
+            bindings = tuple(self._rooms_provider())
+            for binding in bindings:
                 if self._stop.is_set():
-                    return
+                    return bool(bindings)
                 self._run_room_once(binding)
-            return
+            return bool(bindings)
         with self._status_lock:
             self._room_threads = {
                 room_id: t for room_id, t in self._room_threads.items() if t.is_alive()}
             available = self.max_concurrent_rooms - len(self._room_threads)
             active_rooms = set(self._room_threads)
         if available <= 0:
-            return
+            return True
         bindings = tuple(self._rooms_provider())
         if not bindings:
-            return
+            return bool(active_rooms)
         start = self._room_schedule_cursor % len(bindings)
         self._room_schedule_cursor = (start + 1) % len(bindings)
         for binding in bindings[start:] + bindings[:start]:
             if self._stop.is_set() or available <= 0:
-                return
+                return True
             if binding.room_id in active_rooms:
                 continue
             room_thread = threading.Thread(
@@ -491,6 +497,7 @@ class HostedRoomRuntime:
             active_rooms.add(binding.room_id)
             available -= 1
             room_thread.start()
+        return True
 
     def _run_room_once(self, binding: HostedRoomBinding) -> None:
         try:

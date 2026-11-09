@@ -552,7 +552,13 @@ def _(rid, params: dict, db_path) -> dict:
         return _err(rid, 4118, "promotion requires confirm=true acknowledging the previous "
                     "authority can no longer commit")
     reason = params.get("reason", "authority-unreachable")
-    return _ok(rid, promote_replica(db_path, room_id=params.get("room_id"), reason=reason))
+    promoted = promote_replica(db_path, room_id=params.get("room_id"), reason=reason)
+    # A promotion creates a locally authoritative room. Notify an idle hosted
+    # supervisor only AFTER the atomic promotion commits, just like create_room.
+    service = get_hosted_room_service()
+    if service is not None and service.db_path == db_path:
+        service.wakeup()
+    return _ok(rid, promoted)
 
 
 _passthrough(
