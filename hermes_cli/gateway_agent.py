@@ -888,7 +888,15 @@ class GatewayAgent:
                 break
             if isinstance(frame, Exception):
                 if lost_before(frame, self._epoch):
-                    continue  # the previous connection's loss, already reported; this turn is live
+                    continue  # a transport error from an already superseded socket
+                if isinstance(frame, GatewayClientError) and str(frame) == DISCONNECTED:
+                    # The gateway may still be running this exact admission. Reattach
+                    # and settle from its receipt; NEVER issue a second prompt.submit.
+                    outcome = self._recover(turn)
+                    if outcome is not None:
+                        return outcome
+                    self._epoch = getattr(self.connection, "epoch", self._epoch)
+                    continue  # still in flight; await terminal event on the new socket
                 return frame
             params = frame.get("params") if isinstance(frame, dict) else None
             if not isinstance(params, dict) or params.get("session_id") != self.session_id:
